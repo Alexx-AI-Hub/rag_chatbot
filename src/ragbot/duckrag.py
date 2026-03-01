@@ -7,7 +7,7 @@ from config import QA_PROMPT_TEMPLATE, OPTIMIZE_SEARCH_QUERY_PROMPT
 ddg_search = DDGS()
 
 
-def duckduckgo_search(query:str, model:str )->list[dict[str, str]] | list[str]:
+def _duckduckgo_search(query:str, model:str )->list[dict[str, str]] | list[str]:
     # DuckDuckGo Rate-Limit = 1req/s OR 20req/30mins
     search_query_prompt = OPTIMIZE_SEARCH_QUERY_PROMPT.format(user_query=query)
     search_query = llm.gen_response(prompt=search_query_prompt, model=model, temp=0.0, top_p=1.0)
@@ -22,10 +22,12 @@ def duckduckgo_search(query:str, model:str )->list[dict[str, str]] | list[str]:
         )
     except RatelimitException:
         log.warning("DuckDuckGo RatelimitException")
-        return ["No Result Because of RatelimitException"]
-    except Exception as e:
-        log.error(e)
-        return [str(e)]
+        return [{
+            "title": "Rate limited",
+            "href": "",
+            "Body": "DuckDuckGo rate limit reached.",
+            "structured_result": "Web search unavailable right now due to rate limit.",
+        }]
 
 
     results_list = []
@@ -45,17 +47,16 @@ def duckduckgo_search(query:str, model:str )->list[dict[str, str]] | list[str]:
     return results_list
 
 
-def chat_resp_with_duck_search(query: str, prompt_template: str, model: str, temp:float, top_p:float) -> str:
+def chat_resp_with_duck_search(client, query: str, model: str, temp:float, top_p:float) -> str:
     # Use user's primary search function and support its fallback return types.
-    res_list = duckduckgo_search(query, model)
+    res_list = _duckduckgo_search(query, model)
 
-    context = ""
     struct_context = "\n".join(res.get("structured_result") for res in res_list if res.get("structured_result"))
 
-    prompt = prompt_template.format(query=query, context=struct_context)
+    prompt = QA_PROMPT_TEMPLATE.format(query=query, context=struct_context)
     print("=== INPUT ===")
     print(prompt)
-    response = llm.gen_response(prompt=prompt, model=model, temp=temp, top_p=top_p)
+    response = llm.gen_response(client=client, prompt=prompt, model=model, temp=temp, top_p=top_p)
 
     log.info("Chat Response from LLM using DuckDuckDo Search-Engine-Result: %s", response)
     return response

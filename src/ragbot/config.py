@@ -1,15 +1,5 @@
 from pathlib import Path
-
 from schemas import RAGSettings
-import logging
-
-logging.getLogger().handlers[0].setFormatter(
-    logging.Formatter(
-        "%(asctime)s - %(levelname)s - %(filename)s - %(funcName)s() - %(message)s",
-        datefmt="%H:%M:%S",
-    )
-)
-log = logging.getLogger()
 
 
 BASE_DIR = Path("data/base_docs")

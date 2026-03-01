@@ -69,11 +69,15 @@ def copy_files_from_dir(src_dir_path: str | Path, dest_dir_path: str | Path)->bo
         log.info("Source directory is empty, nothing to copy: %s", src_dir_path)
         return False
 
+    copied = 0
     for file_path in files:
         file_path = Path(file_path)
-        copy_if_allowed(file_path, dest_path, file_path.name)
-    log.info("Copied all files from: %s --> %s", src_dir_path, dest_dir_path)
-    return True
+        if copy_if_allowed(file_path, dest_path, file_path.name):
+            copied += 1
+            log.info("Copied %s from: %s --> %s", file_path.name, src_dir_path, dest_dir_path)
+            continue
+        log.debug("Failed to copy %s from: %s --> %s", file_path.name, src_dir_path, dest_dir_path)
+    return True if copied == len(files) else False
 
 
 

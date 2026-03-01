@@ -11,7 +11,8 @@ from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.llms.ollama import Ollama
 from llama_index.retrievers.bm25 import BM25Retriever
 from llama_index.core.callbacks import CallbackManager
-from config import BASE_INDEX_DIR, SESSION_INDEX_DIR
+from llama_index.core.base.response.schema import Response, StreamingResponse
+from llama_index.core.indices.base import BaseIndex
 from schemas import RAGSettings
 log = logging.getLogger(__name__)
 
@@ -24,18 +25,22 @@ def build_index(src_path: str | Path, dest_path: str | Path, settings: RAGSettin
     src_path, dest_path = Path(src_path), Path(dest_path)
     if not src_path.is_dir() or not any(src_path.iterdir()):
         return None
+
     try:
         settings = _normalize_settings_if_dict(settings)
         _set_llama_settings(settings)
         docs = SimpleDirectoryReader(input_dir=str(src_path)).load_data(show_progress=True)
+
         if docs:
-            file_manager.reset_directory(dest_path)
             index = VectorStoreIndex.from_documents(docs)
+            file_manager.reset_directory(dest_path)
             index.storage_context.persist(persist_dir=str(dest_path))
             log.debug("Index successfully built from %s -> %s", src_path, dest_path)
             return index
+
         log.debug("Docs Empty/None. Failed to build index from %s -> %s: ", src_path, dest_path)
         return None
+
     except Exception as e:
         log.error("Failed to build index from %s -> %s: %s", src_path, dest_path, e)
         return None
@@ -79,19 +84,22 @@ def _load_index(index_dir: Path):
         return None
 
 
-def query(msg: str, settings: RAGSettings | dict):
+def query(msg: str, index_both:list[BaseIndex], settings: RAGSettings | dict)->  Response | StreamingResponse | None:
     """Run a RAG query against available persisted indexes and return raw LlamaIndex response."""
     msg = msg.strip()
     if msg:
         settings = _normalize_settings_if_dict(settings)
         _set_llama_settings(settings)
-        indexes = [idx for idx in (_load_index(BASE_INDEX_DIR), _load_index(SESSION_INDEX_DIR)) if idx is not None]
+        
+        indexes = [index for index in index_both if index]
+        #indexes = [idx for idx in (_load_index(BASE_INDEX_DIR), _load_index(SESSION_INDEX_DIR)) if idx is not None]
+        
         if indexes:
             top_k = max(1, int(settings.top_k))
             retrievers = [
-                r for idx in indexes for r in (
-                    VectorIndexRetriever(index=idx, similarity_top_k=top_k),
-                    BM25Retriever.from_defaults(docstore=idx.docstore, similarity_top_k=top_k),
+                r for index in indexes for r in (
+                    VectorIndexRetriever(index=index, similarity_top_k=top_k),
+                    BM25Retriever.from_defaults(docstore=index.docstore, similarity_top_k=top_k),
                 )
             ]
             fused_retriever = QueryFusionRetriever(
@@ -117,8 +125,8 @@ def query(msg: str, settings: RAGSettings | dict):
     return None
 
 
-def get_chunk(chunk_id):
-    indexes = [idx for idx in (_load_index(BASE_INDEX_DIR), _load_index(SESSION_INDEX_DIR)) if idx is not None]
+def get_chunk(chunk_id, index_both:list[BaseIndex]):
+    indexes = [index for index in index_both if index]
     for index in indexes:
         try:
             chunk_content = index.docstore.get_node(chunk_id).text
@@ -128,7 +136,7 @@ def get_chunk(chunk_id):
     return None
 
 
-def resp_source(query_resp)->list[dict[str, str]]:
+def resp_source(query_resp: Response, index_both:list[BaseIndex])->list[dict[str, str]]:
     sources = []
     # response.source_nodes[0].node.metadata.keys() = (['page_label', 'file_name', 'file_path', 'file_type', 'file_size', 'creation_date', 'last_modified_date'])
     for src in query_resp.source_nodes:
@@ -136,7 +144,7 @@ def resp_source(query_resp)->list[dict[str, str]]:
         src_score = round(src.score, 2)
         src_page = src.node.metadata.get("page_label")
         src_type = src.node.metadata.get("file_type")
-        src_text = get_chunk(src.node.node_id)                             #get_content(metadata_mode=MetadataMode.NONE)
+        src_text = get_chunk(src.node.node_id, index_both)                             #get_content(metadata_mode=MetadataMode.NONE)
         file_path = src.node.metadata.get("file_path")
 
         source_info = f"""Name: {src_name}\nScore:({src_score})\nType: {src_type}\nDocument: \n {src_text}"""
