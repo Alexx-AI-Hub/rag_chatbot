@@ -1,0 +1,17 @@
+﻿[project]
+name = "rag-chatbot"
+version = "0.1.0"
+description = "Local RAG chatbot (Chainlit + LlamaIndex + DuckDuckGo Ollama-Models using OpenAI-API)"
+requires-python = ">=3.10"
+
+dependencies = [
+  "chainlit",
+  "llama-index",
+  "llama-index-llms-ollama",
+  "llama-index-embeddings-ollama",
+  "llama-index-retrievers-bm25",
+  "ollama",
+  "openai",
+  "ddgs",
+  "duckduckgo-search",
+]
