@@ -1,0 +1,12 @@
+chainlit==2.9.6
+llama_index==0.14.15
+llama_index_embeddings_ollama==0.8.6
+llama_index_llms_ollama==0.9.1
+llama_index_retrievers_bm25==0.6.5
+ollama==0.6.1
+openai==2.24.0
+httpx==0.28.1
+ddgs==9.10.0
+duckduckgo_search==8.1.1
+filelock==3.25.0
+langchain_core==1.2.16
