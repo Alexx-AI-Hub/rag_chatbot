@@ -5,10 +5,6 @@
 - Prefer targeted search and targeted reads over broad file dumps.
 - Avoid recursive scans of excluded, generated, or large folders unless clearly needed.
 
-## Output limits
-- Prefer constrained search output, for example:
-- Avoid broad root-level recursive listings.
-
 ## Expensive operations to avoid by default
 - broad `Get-Content` across many files
 - recursive reads across the whole repo
@@ -55,5 +51,3 @@ The Code Should be Scalable and Testable using SOLID Principles at a reasonable 
 
 ## Testing
 - Prefer targeted tests over full-suite runs.
-Validate at least:
- - To be implemented!
