@@ -1,16 +1,30 @@
 from __future__ import annotations
-import os
-import hashlib
-import logging as log
-import shutil
+import hashlib, os, shutil, logging as log
 from pathlib import Path
 from typing import Any
 
-from config import ALLOWED_UPLOAD_TYPES, MAX_UPLOAD_SIZE, BASE_DIR, SESSION_DIR, BASE_INDEX_DIR, SESSION_INDEX_DIR
+from ragbot.config import ALLOWED_UPLOAD_TYPES, MAX_UPLOAD_SIZE, BASE_DIR, SESSION_DIR, BASE_INDEX_DIR, SESSION_INDEX_DIR
 
 UNIQUE_NAME_MAX_ATTEMPTS = 99
 
+
+def get_filenames_from_dir(paths: Path | str | list[Path | str]) -> list[str]:
+    """Return file names from one or more directories."""
+    filenames: list[str] = []
+
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
+
+    for dir_path in paths:
+        dir_path = Path(dir_path)
+
+        if dir_path.exists() and dir_path.is_dir():
+            filenames.extend(file.name for file in sorted(dir_path.iterdir()) if file.is_file())
+
+    return filenames
+
 def clean_session_dirs():
+    """Remove leftover session files and indexes from a previous run."""
     if any(directory.exists() and any(directory.iterdir()) for directory in (SESSION_DIR, SESSION_INDEX_DIR)):
         reset_directory(SESSION_DIR)
         reset_directory(SESSION_INDEX_DIR)
@@ -53,6 +67,7 @@ def get_valid_path(file: Any) -> Path | None:
 
 
 def copy_files_from_dir(src_dir_path: str | Path, dest_dir_path: str | Path)->bool:
+    """Copy all direct child files from one directory into another."""
     src_dir_path = Path(src_dir_path)
     dest_path = Path(dest_dir_path)
 
@@ -77,17 +92,16 @@ def copy_files_from_dir(src_dir_path: str | Path, dest_dir_path: str | Path)->bo
             log.info("Copied %s from: %s --> %s", file_path.name, src_dir_path, dest_dir_path)
             continue
         log.debug("Failed to copy %s from: %s --> %s", file_path.name, src_dir_path, dest_dir_path)
-    return True if copied == len(files) else False
+    return copied == len(files)
 
 
 
-def copy_if_allowed(file_path: str | Path, dest_dir_path: str | Path, file_name: str,
-                    max_file_size: int = MAX_UPLOAD_SIZE, allowed_file_types: set[str] | list[str] = ALLOWED_UPLOAD_TYPES) -> bool:
+def copy_if_allowed(file_path: str | Path, dest_dir_path: str | Path, file_name: str, max_file_size: int = MAX_UPLOAD_SIZE, allowed_file_types: set[str] | list[str] = ALLOWED_UPLOAD_TYPES) -> bool:
     """Copy a source file into a destination directory if suffix and size are allowed."""
     file_path = get_valid_path(file_path)
     dest_dir_path = Path(dest_dir_path)
     if file_path:
-        if allowed_file_types and not file_path.suffix.lower() in allowed_file_types:
+        if allowed_file_types and file_path.suffix.lower() not in allowed_file_types:
             log.debug("Unallowed file type:(%s)", file_path.suffix.lower())
             return False
 
@@ -135,18 +149,21 @@ def reset_directory(dir_path: str | Path) -> None:
 
 def _file_name_unique(dir_path: Path, file_name: str) -> str:
     """Return a non-conflicting file name for directory."""
-    path = dir_path / Path(file_name).name
+    file_name = Path(file_name).name
+    path = dir_path / file_name
     if not path.exists():
         log.debug("Good!. %s: did was unique In: %s", file_name, dir_path)
         return file_name
 
-    file_stem = path.stem  # file_name without .suffix(ex: .txt)
+    file_stem = path.stem
     file_type = path.suffix
     counter = 1
     while counter <= UNIQUE_NAME_MAX_ATTEMPTS:
         next_file_name = dir_path / f"{file_stem}_({counter}){file_type}"
         if not next_file_name.exists():
-            log.debug("Good!. %s: did was unique In: %s", file_name, dir_path)
+            log.debug("Good!. %s: did was unique In: %s", next_file_name, dir_path)
             return next_file_name.name
         counter += 1
+
+    log.warning("Could not generate unique filename for %s in %s", file_name, dir_path)
     return ""

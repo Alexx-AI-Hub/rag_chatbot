@@ -1,5 +1,5 @@
 from pathlib import Path
-from schemas import RAGSettings
+from ragbot.schemas import RAGSettings
 
 
 BASE_DIR = Path("data/base_docs")

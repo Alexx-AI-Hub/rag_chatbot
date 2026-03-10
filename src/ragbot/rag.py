@@ -1,155 +1,141 @@
 from __future__ import annotations
-import logging
-from pathlib import Path
 
-import file_manager
-from llama_index.core import Settings, SimpleDirectoryReader, StorageContext, VectorStoreIndex, load_index_from_storage
 from llama_index.core.node_parser import SentenceSplitter
-from llama_index.core.query_engine import CitationQueryEngine
-from llama_index.core.retrievers import QueryFusionRetriever, VectorIndexRetriever
-from llama_index.embeddings.ollama import OllamaEmbedding
-from llama_index.llms.ollama import Ollama
-from llama_index.retrievers.bm25 import BM25Retriever
-from llama_index.core.callbacks import CallbackManager
-from llama_index.core.base.response.schema import Response, StreamingResponse
+from llama_index.core import VectorStoreIndex
 from llama_index.core.indices.base import BaseIndex
-from schemas import RAGSettings
-log = logging.getLogger(__name__)
+from llama_index.core.retrievers import QueryFusionRetriever
+from llama_index.core.schema import NodeWithScore, TextNode
+from llama_index.retrievers.bm25 import BM25Retriever
+from llama_index.embeddings.openai_like import OpenAILikeEmbedding
+from llama_index.llms.openai_like import OpenAILike
+from llama_index.core.llms import LLM
+from llama_index.core.embeddings import BaseEmbedding
+
+from ragbot.schemas import RAGSettings, Chunk
+
+BASE_URL = "http://localhost:11434/v1"
+API_KEY = "placeholder"
 
 
-def set_handler(cb_handler)->None:
-    Settings.callback_manager = CallbackManager([cb_handler])
-
-def build_index(src_path: str | Path, dest_path: str | Path, settings: RAGSettings | dict)-> VectorStoreIndex | None:
-    """Build and persist a vector index from a documents in directory, or return None on failure/empty directory."""
-    src_path, dest_path = Path(src_path), Path(dest_path)
-    if not src_path.is_dir() or not any(src_path.iterdir()):
-        return None
-
-    try:
-        settings = _normalize_settings_if_dict(settings)
-        _set_llama_settings(settings)
-        docs = SimpleDirectoryReader(input_dir=str(src_path)).load_data(show_progress=True)
-
-        if docs:
-            index = VectorStoreIndex.from_documents(docs)
-            file_manager.reset_directory(dest_path)
-            index.storage_context.persist(persist_dir=str(dest_path))
-            log.debug("Index successfully built from %s -> %s", src_path, dest_path)
-            return index
-
-        log.debug("Docs Empty/None. Failed to build index from %s -> %s: ", src_path, dest_path)
-        return None
-
-    except Exception as e:
-        log.error("Failed to build index from %s -> %s: %s", src_path, dest_path, e)
-        return None
+def build_openai_compatible_embedding(model_name: str, base_url: str=BASE_URL, api_key: str=API_KEY, batch_size: int=64) -> OpenAILikeEmbedding:
+    """Build an OpenAI-compatible embedding client."""
+    return OpenAILikeEmbedding(
+        model_name=model_name,
+        api_base=base_url,
+        api_key=api_key,
+        embed_batch_size=batch_size
+    )
 
 
-def _normalize_settings_if_dict(settings: RAGSettings | dict) -> RAGSettings:
-    """Normalizes settings if it's a dict. Important: Key values must match attribute names in RAGSettings."""
-    if isinstance(settings, dict):
-        settings_dict = settings
-        settings = RAGSettings()
-        for key, value in settings_dict.items():
-            if key in settings.__dict__:
-                setattr(settings, key, value)
-    return settings
+def build_openai_compatible_llm(model_name: str, base_url: str=BASE_URL, api_key: str=API_KEY) -> OpenAILike:
+    """Build an OpenAI-compatible LLM client."""
+    return OpenAILike(
+        model=model_name,
+        api_base=base_url,
+        api_key=api_key,
+    )
 
 
-def _set_llama_settings(settings: RAGSettings) -> None:
-    Settings.llm = Ollama(model=settings.llm_model, temperature=settings.temperature)
-    Settings.embed_model = OllamaEmbedding(model_name=settings.embed_model)
-    Settings.text_splitter = SentenceSplitter(
+def build_sentence_splitter(settings: RAGSettings) -> SentenceSplitter:
+    """Build a sentence splitter from chunk settings."""
+    return SentenceSplitter(
         chunk_size=max(50, int(settings.chunk_size)),
         chunk_overlap=max(0, int(settings.chunk_overlap)),
     )
 
 
-def _load_index(index_dir: Path):
-    if not index_dir.exists():
-        log.error("Index directory does not exist: %s", index_dir)
-        return None
 
-    if not any(index_dir.iterdir()):
-        log.info("Index directory is empty: %s", index_dir)
-        return None
+def retrieve_fusion(
+        query:str, nodes:list[TextNode], embed_model:BaseEmbedding, llm:LLM, top_k:int)->list[NodeWithScore]:
+    """Fuse BM25 and vector retrieval over in-memory nodes."""
 
-    try:
-        return load_index_from_storage(
-            StorageContext.from_defaults(persist_dir=str(index_dir))
+    if nodes and query:
+
+        bm25 = BM25Retriever.from_defaults(nodes=nodes, similarity_top_k=top_k)
+        vector = VectorStoreIndex(nodes=nodes, embed_model=embed_model).as_retriever(similarity_top_k=top_k)
+
+        fusion = QueryFusionRetriever(
+            retrievers=[bm25, vector],
+            similarity_top_k=top_k,
+            num_queries=1,
+            mode="relative_score",
+            use_async=False,
+            llm=llm
         )
-    except Exception:
-        log.exception("Failed to load index from: %s", index_dir)
-        return None
+        if fusion_nodes := fusion.retrieve(query):
+            cutoff_nodes =  [fusion_nodes[0]]
+            for i, f_node in enumerate(fusion_nodes[1:], 1):
+                if float(f_node.score) < float(fusion_nodes[i - 1].score * 0.5):
+                    break
+                cutoff_nodes.append(f_node)
+            return cutoff_nodes
+    return []
 
 
-def query(msg: str, index_both:list[BaseIndex], settings: RAGSettings | dict)->  Response | StreamingResponse | None:
-    """Run a RAG query against available persisted indexes and return raw LlamaIndex response."""
-    msg = msg.strip()
-    if msg:
-        settings = _normalize_settings_if_dict(settings)
-        _set_llama_settings(settings)
-        
-        indexes = [index for index in index_both if index]
-        #indexes = [idx for idx in (_load_index(BASE_INDEX_DIR), _load_index(SESSION_INDEX_DIR)) if idx is not None]
-        
-        if indexes:
-            top_k = max(1, int(settings.top_k))
-            retrievers = [
-                r for index in indexes for r in (
-                    VectorIndexRetriever(index=index, similarity_top_k=top_k),
-                    BM25Retriever.from_defaults(docstore=index.docstore, similarity_top_k=top_k),
-                )
-            ]
-            fused_retriever = QueryFusionRetriever(
-                retrievers=retrievers,
-                similarity_top_k=top_k,
-                num_queries=1,
-                mode="reciprocal_rerank",
-                use_async=True,
-                #callback_manager=Settings.callback_manager
+def retrieve_fusion_from_indexes(
+        query: str, indexes: list[BaseIndex], llm: LLM, top_k: int) -> list[NodeWithScore]:
+    """Fuse retrievers built directly from loaded indexes."""
+
+    if indexes and query:
+        retrievers = [
+            index.as_retriever(similarity_top_k=top_k)
+            for index in indexes
+        ]
+
+        fusion = QueryFusionRetriever(
+            retrievers=retrievers,
+            similarity_top_k=top_k,
+            num_queries=1,
+            mode="relative_score",
+            use_async=False,
+            llm=llm
+        )
+        if fusion_nodes := fusion.retrieve(query):
+            cutoff_nodes = [fusion_nodes[0]]
+            for i, f_node in enumerate(fusion_nodes[1:], 1):
+                if float(f_node.score) < float(fusion_nodes[i - 1].score * 0.5):
+                    break
+                cutoff_nodes.append(f_node)
+            return cutoff_nodes
+    return []
+
+
+def retrieve_bm25(query:str, nodes:list[TextNode], top_k:int)->list[NodeWithScore]:
+    """Run BM25 retrieval over the provided nodes."""
+    if not nodes or not query:
+        return []
+
+    bm25 = BM25Retriever.from_defaults(nodes=nodes, similarity_top_k=top_k)
+    bm25_nodes = bm25.retrieve(query)
+
+    return bm25_nodes
+
+
+def norm_node_to_chunk(nodes: list[NodeWithScore]) -> list[Chunk]:
+    """Normalize retrieved nodes into sorted Chunk objects."""
+    chunks: list[Chunk] = []
+
+    for node in nodes:
+        metadata = node.metadata or {}
+        content = (node.get_content() or "").strip()
+
+        url = (
+            metadata.get("url")
+            or metadata.get("file_path")
+            or metadata.get("file_name")
+            or "local://unknown-source"
+        )
+        title = metadata.get("title") or metadata.get("file_name") or str(url)
+
+        chunks.append(
+            Chunk(
+                url=str(url).strip(),
+                title=str(title).strip(),
+                content=content,
+                score=float(node.score or 0.0),
             )
-            query_engine = CitationQueryEngine.from_args(
-                indexes[0],     # only required anchor for engine
-                retriever=fused_retriever,
-                citation_chunk_size=512,
-                citation_chunk_overlap=50,
-                top_k=top_k,
-                streaming=settings.streaming,
-                #callback_manager=Settings.callback_manager,
-                metadata_mode=settings.metadata_mode, # "all", "llm", "embed" "none"
-                #citation_qa_template=
-            )
-            return query_engine.query(msg)
-    return None
+        )
 
-
-def get_chunk(chunk_id, index_both:list[BaseIndex]):
-    indexes = [index for index in index_both if index]
-    for index in indexes:
-        try:
-            chunk_content = index.docstore.get_node(chunk_id).text
-            return chunk_content
-        except(ValueError, KeyError):
-            continue
-    return None
-
-
-def resp_source(query_resp: Response, index_both:list[BaseIndex])->list[dict[str, str]]:
-    sources = []
-    # response.source_nodes[0].node.metadata.keys() = (['page_label', 'file_name', 'file_path', 'file_type', 'file_size', 'creation_date', 'last_modified_date'])
-    for src in query_resp.source_nodes:
-        src_name = src.node.metadata.get("file_name", "Unknown File Name")
-        src_score = round(src.score, 2)
-        src_page = src.node.metadata.get("page_label")
-        src_type = src.node.metadata.get("file_type")
-        src_text = get_chunk(src.node.node_id, index_both)                             #get_content(metadata_mode=MetadataMode.NONE)
-        file_path = src.node.metadata.get("file_path")
-
-        source_info = f"""Name: {src_name}\nScore:({src_score})\nType: {src_type}\nDocument: \n {src_text}"""
-
-        source_metadata = {"source_info":source_info, "src_type":src_type, "file_path":file_path, "src_page":src_page, "src_score":src_score}
-
-        sources.append(source_metadata)
-    return sources
+    chunks = [chunk for chunk in chunks if chunk.content]
+    chunks.sort(key=lambda chunk: (-chunk.score, chunk.url, chunk.title, chunk.content))
+    return chunks
