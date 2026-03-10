@@ -13,8 +13,10 @@
 
 ## Project structure
 - `src/ragbot/app.py`: Chainlit-specific code, UI, and event handling.
-- `src/ragbot/rag.py`: Local RAG, indexing, retrieval, and citations.
-- `src/ragbot/duckrag.py`: Online search and synthesis flow.
+- `src/ragbot/router.py`: LangGraph routing between local and web retrieval.
+- `src/ragbot/local_rag.py`: Local document indexing, loading, and retrieval.
+- `src/ragbot/web_rag.py`: Web search, page loading, chunking, and ranking.
+- `src/ragbot/rag.py`: Shared retrieval, chunking, and normalization helpers.
 - `src/ragbot/llm.py`: LLM client helpers.
 - `src/ragbot/file_manager.py`: File handling and validation.
 - `src/ragbot/schemas.py`: Shared schemas.
