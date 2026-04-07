@@ -27,6 +27,13 @@ from ragbot.llm import get_model_list, get_openai_client
 from ragbot.config import BASE_DIR, BASE_INDEX_DIR, SESSION_INDEX_DIR, SESSION_DIR
 from ragbot.schemas import RAGSettings
 
+RAG_MODE_LABELS = {
+    "auto": "AI Decides",
+    "web": "web",
+    "local": "local",
+}
+RAG_MODE_VALUES = {label: value for value, label in RAG_MODE_LABELS.items()}
+
 
 @cl.on_chat_start
 async def on_chat_start() -> None:
@@ -49,9 +56,9 @@ async def on_chat_start() -> None:
     cl.user_session.set("router_graph", router.build_graph())
 
     await cl.Message(
-        content="Save/Persist session files",
+        content="Save uploaded session files to persisted files (can be used to re-embed files)",
         actions=[
-            cl.Action(name="persist_session_to_base", label="Click to Save", payload={})
+            cl.Action(name="persist_session_to_base", label="Persist Uploaded Files", payload={})
         ]
     ).send()
 
@@ -186,16 +193,10 @@ async def _build_chat_settings(settings: RAGSettings, models: list[str]) -> dict
                 initial=settings.streaming,
             ),
             Select(
-                id="metadata_mode",
-                label="Provide Metadata - LLM/Embedding Model",
-                values=["all", "llm", "embed", "none"],
-                initial_value=settings.metadata_mode,
-            ),
-            Select(
                 id="rag_mode",
                 label="RAG Mode",
-                values=["auto", "web", "local"],
-                initial_value=settings.rag_mode,
+                values=list(RAG_MODE_VALUES),
+                initial_value=RAG_MODE_LABELS.get(settings.rag_mode, settings.rag_mode),
             ),
         ]
     ).send()
@@ -203,7 +204,15 @@ async def _build_chat_settings(settings: RAGSettings, models: list[str]) -> dict
 
 def _to_rag_settings(chat_settings: dict[str, str|int|float|bool] | RAGSettings) -> RAGSettings:
     """Normalize UI settings into a RAGSettings instance."""
-    return chat_settings if isinstance(chat_settings, RAGSettings) else RAGSettings(**chat_settings)
+    if isinstance(chat_settings, RAGSettings):
+        return chat_settings
+
+    normalized_settings = dict(chat_settings)
+    rag_mode = normalized_settings.get("rag_mode")
+    if isinstance(rag_mode, str):
+        normalized_settings["rag_mode"] = RAG_MODE_VALUES.get(rag_mode, rag_mode)
+
+    return RAGSettings(**normalized_settings)
 
 
 @cl.action_callback("persist_session_to_base")
@@ -236,7 +245,7 @@ def _build_citation_element(chunks:list[object])-> list[cl.Text] | None:
     elements = []
     for i, chunk in enumerate(chunks, 1):
         element = cl.Text(
-            content=f"Content:\n{chunk.content}\n\nUrl: {chunk.url}",
+            content=f"### Content\n\n{chunk.content}\n\n---\n\n### Source\n\n{chunk.url}",
             name=f"(Source {i})",
             display="side"
         )

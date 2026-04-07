@@ -74,7 +74,7 @@ def llm_router_node(state: State) -> Node:
     list_of_filenames = file_manager.get_filenames_from_dir(
         paths=([config.BASE_DIR, config.SESSION_DIR])
     )
-    router_prompt = llm.PROMPT_TEMPLATE_ROUTER_AGENT.format(
+    router_prompt = config.PROMPT_TEMPLATE_ROUTER_AGENT.format(
         user_query=state.query,
         filenames=("\n".join(list_of_filenames) or "N/A")
     )

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core import VectorStoreIndex
 from llama_index.core.indices.base import BaseIndex
@@ -121,9 +123,9 @@ def norm_node_to_chunk(nodes: list[NodeWithScore]) -> list[Chunk]:
 
         url = (
             metadata.get("url")
-            or metadata.get("file_path")
             or metadata.get("file_name")
-            or "local://unknown-source"
+            or (Path(metadata.get("file_path")).name if metadata.get("file_path") else "")
+            or "Unknown"
         )
         title = metadata.get("title") or metadata.get("file_name") or str(url)
 

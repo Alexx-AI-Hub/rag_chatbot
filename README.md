@@ -2,6 +2,10 @@
 
 A grounded AI assistant that answers questions using either your own documents or live web search, with source-backed responses reducing LLM hallucinations.
 
+<p align="center">
+  <img src="docs/images/web-rag-answer.png" alt="Web RAG answer with cited source URL" width="900">
+</p>
+
 ## Features
 
 - Ask questions about your own documents.
@@ -12,6 +16,16 @@ A grounded AI assistant that answers questions using either your own documents o
 - Save useful session files to the long-term knowledge base.
 - Automatically choose the most appropriate retrieval mode using AI.
 - Allow manual control over retrieval mode, forcing answers to use either local documents or web search.
+
+## Examples
+
+### Local document answer
+
+![Local RAG answer from a Databricks document](docs/images/local-rag-filestore-answer.png)
+
+### Settings panel
+
+![Settings panel showing model and RAG mode options](docs/images/settings-panel.png)
 
 ## Why it matters
 

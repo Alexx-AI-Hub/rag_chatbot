@@ -11,18 +11,14 @@ class RAGSettings:
     chunk_size: int = 512
     chunk_overlap: int = 100
 
-    llm_model: str = "llama3.2:3b"
+    llm_model: str = "llama3.1:8b"
     top_p:float = 1
     temperature: float = 0.1
-    context_window: int = 4096
-    max_tokens: int = 512
 
     embed_model: str = "nomic-embed-text:latest"
     top_k: int = 2
 
-    min_relevance_score: float = 0.05
-    streaming:bool = False
-    metadata_mode:str = "all"
+    streaming:bool = True
     rag_mode: Literal["auto", "web", "local"] = "auto"
 
 

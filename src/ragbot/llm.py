@@ -6,63 +6,8 @@ import httpx
 import logging as log
 from textwrap import dedent
 
+from ragbot.config import PROMPT_TEMPLATE_QA_SYSTEM, PROMPT_TEMPLATE_QA_USER
 from ragbot.schemas import Chunk
-
-PROMPT_TEMPLATE_QA_SYSTEM = dedent("""
-    You are a citation-grounded assistant.
-    Answer the user query using ONLY the provided sources.
-    Rules:
-    - Write one concise final answer.
-    - Add citations at the end of each paragraph/section.
-    - Use citation format exactly: (Source 1), (Source 2).
-    - It is extremely important that you do not forget parenthesis around Source () !.
-    - If you want to cite 2 or more sources at the same place do it like this (Source 1) (Source 2).
-    - Source numbers must match provided sources exactly.
-    - Never invent facts or sources.
-    - If you provide a partial answer, explicitly note that the available sources only partially answer the question.
-    - If the sources are only partially relevant, make that clear and only describe what is actually supported.
-    - If sources do not support the query, answer: 'The sources do not mention anything relevant'.
-    """).strip()
-
-PROMPT_TEMPLATE_QA_USER = dedent("""
-    Question:
-    {user_query}
-
-    Sources:
-    {chunks}
-
-    Answer:
-    """).strip()
-
-PROMPT_TEMPLATE_ROUTER_AGENT = dedent("""
-    You are a routing classifier.
-
-    Task:
-    Decide whether the query should use local_rag or web_rag.
-
-    Decision priority:
-    - Base the decision primarily on the query.
-    - If the query explicitly asks for web, online, current, fresh, live, news, or internet-dependent information, choose web_rag.
-    - If the query explicitly asks to use local documents, uploaded files, or local knowledge, choose local_rag.
-    - If the query does not clearly indicate either, then look at the available local filenames.
-    - If the filenames suggest relevant local documents exist, choose local_rag.
-    - Otherwise, choose web_rag.
-
-    Output schema:
-    Return a JSON object with exactly these fields:
-    - "rag": either "local_rag" or "web_rag"
-    - "reasoning": a short explanation for the decision
-
-    Rules:
-    - Keep reasoning brief and concrete.
-    - Do not output any text outside the JSON object.
-
-    Query:
-    {user_query}
-
-    Available local filenames:
-    {filenames}
-    """).strip()
 
 
 
@@ -72,7 +17,7 @@ def get_openai_client(api_key:str="KEY", base_url:str="http://localhost:11434/v1
 
 
 def chat_response(client:OpenAI, prompts:ResponseInputParam, system_prompt: str,
-                  model: str = "llama3.2:3b", temp:float=0.2, top_p:float=0.95, stream:bool=False):
+                  model: str = "llama3.1:8b", temp:float=0.2, top_p:float=0.95, stream:bool=False):
     """Send a chat request through the Responses API."""
     return client.responses.create(
         model=model,
@@ -114,6 +59,7 @@ def str_format_chunks(chunks:list[Chunk]) -> str:
     return "\n\n".join(
         dedent(f"""
          Source {i}
+         Citation token: (Source {i})
          Url: {chunk.url or 'N/A'}
          Content: {chunk.content or "N/A"}
          """).strip()
@@ -121,9 +67,14 @@ def str_format_chunks(chunks:list[Chunk]) -> str:
     )
 
 
+def _format_citation_tokens(chunks: list[Chunk]) -> str:
+    """Return the exact citation tokens allowed in the model answer."""
+    return "\n".join(f"- (Source {i})" for i, _ in enumerate(chunks, 1))
+
+
 
 def synthesize_response_with_chunks(client:OpenAI, query:str, chunks:list[Chunk],
-                        model:str="llama3.2:3b", temp:float=0.2, top_p:float=0.95, stream:bool=False) -> str:
+                        model:str="llama3.1:8b", temp:float=0.2, top_p:float=0.95, stream:bool=False) -> str:
     """Generate an answer grounded only in the provided chunks."""
 
     if not query.strip():
@@ -132,7 +83,12 @@ def synthesize_response_with_chunks(client:OpenAI, query:str, chunks:list[Chunk]
         return "SYSTEM: GOT NO CHUNKS !!!"
 
     structured_chunks = str_format_chunks(chunks=chunks)
-    user_prompt = PROMPT_TEMPLATE_QA_USER.format(user_query=query, chunks=structured_chunks)
+    user_prompt = PROMPT_TEMPLATE_QA_USER.format(
+        user_query=query,
+        source_count=len(chunks),
+        citation_tokens=_format_citation_tokens(chunks),
+        chunks=structured_chunks,
+    )
 
     response = chat_response(
         client=client,
